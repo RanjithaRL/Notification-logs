@@ -1,0 +1,4 @@
+{
+  "name": "PostgreSQL Notification Dashboard",
+  "description": "A dashboard to visualize notification logs from a PostgreSQL database, providing optimized queries and chart visualizations for daily trigger counts."
+}
