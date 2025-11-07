@@ -165,3 +165,117 @@ app.get('/api/notifications/summary', async (req, res) => {
 app.listen(port, () => {
   console.log(`[Server] Backend server running at http://localhost:${port}`);
 });
+
+// API endpoint for today's template delivery stats
+app.get('/api/notifications/template-stats-today', async (req, res) => {
+  console.log(`[Server] Received template-stats-today request at ${new Date().toISOString()}`);
+
+  const query = `
+    SELECT 
+      template,
+      COUNT(*) AS delivered_count
+    FROM notification.logs
+    WHERE 
+      DATE(created_at) = CURRENT_DATE
+      AND template IN (
+        'late_fee_payment_reminder_v3',
+        'late_fee_payment_reminder_v4',
+        'monthly_overdue_payment_reminder_v2',
+        'longterm_overdue_payment_reminder_v3',
+        'monthly_payment_reminder_v2',
+        'longterm_payment_reminder_v2'
+      )
+      AND status = 'success'
+    GROUP BY template
+    ORDER BY delivered_count DESC;
+  `;
+
+  try {
+    if (!pool) {
+      // Return mock data if no database connection
+      console.log('[Server] Using mock today template data (no database connection).');
+      const mockData = [
+        { template: 'monthly_payment_reminder_v2', delivered_count: 45 },
+        { template: 'late_fee_payment_reminder_v3', delivered_count: 32 },
+        { template: 'longterm_payment_reminder_v2', delivered_count: 28 },
+      ];
+      return res.json(mockData);
+    }
+
+    console.log('[Server] Executing today template stats query...');
+    const { rows } = await pool.query(query);
+    console.log(`[Server] Today template stats query returned ${rows.length} rows.`);
+    
+    // Format the data
+    const formattedRows = rows.map(row => ({
+      template: row.template,
+      delivered_count: parseInt(row.delivered_count)
+    }));
+    
+    console.log('[Server] Today\'s template data:', formattedRows);
+    res.json(formattedRows);
+  } catch (error) {
+    console.error('[Server] Error executing today template stats query', error.stack);
+    res.status(500).json({ error: 'Internal Server Error', message: error.message });
+  }
+});
+
+
+// API endpoint for template delivery stats (last 7 days)
+app.get('/api/notifications/template-stats', async (req, res) => {
+  console.log(`[Server] Received template-stats request at ${new Date().toISOString()}`);
+
+  const query = `
+    SELECT 
+      TO_CHAR(DATE(created_at), 'YYYY-MM-DD') AS sent_date,
+      template,
+      COUNT(*) AS delivered_count
+    FROM notification.logs
+    WHERE 
+      DATE(created_at) >= CURRENT_DATE - INTERVAL '7 days'
+      AND DATE(created_at) < CURRENT_DATE
+      AND template IN (
+        'late_fee_payment_reminder_v3',
+        'late_fee_payment_reminder_v4',
+        'monthly_overdue_payment_reminder_v2',
+        'longterm_overdue_payment_reminder_v3',
+        'monthly_payment_reminder_v2',
+        'longterm_payment_reminder_v2'
+      )
+      AND status = 'success'
+    GROUP BY DATE(created_at), template
+    ORDER BY sent_date DESC;
+  `;
+
+  try {
+    if (!pool) {
+      // Return mock data if no database connection
+      console.log('[Server] Using mock template data (no database connection).');
+      const mockData = [
+        { sent_date: '2025-11-05', template: 'late_fee_payment_reminder_v3', delivered_count: 45 },
+        { sent_date: '2025-11-05', template: 'monthly_payment_reminder_v2', delivered_count: 78 },
+        { sent_date: '2025-11-04', template: 'late_fee_payment_reminder_v4', delivered_count: 52 },
+        { sent_date: '2025-11-04', template: 'monthly_overdue_payment_reminder_v2', delivered_count: 34 },
+      ];
+      return res.json(mockData);
+    }
+
+    console.log('[Server] Executing template stats query...');
+    const { rows } = await pool.query(query);
+    console.log(`[Server] Template stats query returned ${rows.length} rows.`);
+    
+    // Format the data - sent_date is already a string from TO_CHAR
+    const formattedRows = rows.map(row => ({
+      sent_date: row.sent_date,
+      template: row.template,
+      delivered_count: parseInt(row.delivered_count)
+    }));
+    
+    console.log('[Server] Sample formatted data:', formattedRows.slice(0, 3));
+    res.json(formattedRows);
+  } catch (error) {
+    console.error('[Server] Error executing template stats query', error.stack);
+    res.status(500).json({ error: 'Internal Server Error', message: error.message });
+  }
+});
+

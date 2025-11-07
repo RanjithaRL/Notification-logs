@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import Card from './components/Card';
 import CodeBlock from './components/CodeBlock';
 import NotificationChart from './components/NotificationChart';
+import TemplateDeliveryChart from './components/TemplateDeliveryChart';
 
 const mainQuery = `SELECT 
     * 
@@ -47,6 +48,26 @@ ORDER BY
     trigger,
     status;`;
 
+const templateDeliveryQuery = `SELECT 
+    DATE(created_at) AS sent_date,
+    template,
+    COUNT(*) AS delivered_count
+FROM notification.logs
+WHERE 
+    DATE(created_at) >= CURRENT_DATE - INTERVAL '7 days'
+    AND DATE(created_at) < CURRENT_DATE
+    AND template IN (
+      'late_fee_payment_reminder_v3',
+      'late_fee_payment_reminder_v4',
+      'monthly_overdue_payment_reminder_v2',
+      'longterm_overdue_payment_reminder_v3',
+      'monthly_payment_reminder_v2',
+      'longterm_payment_reminder_v2'
+    )
+    AND status = 'success'
+GROUP BY DATE(created_at), template
+ORDER BY sent_date DESC;`;
+
 // Define the structure for our API response data
 interface ChartData {
   trigger: string;
@@ -67,6 +88,17 @@ interface ApiResponse {
   breakdown: BreakdownData;
 }
 
+interface TemplateData {
+  sent_date: string;
+  template: string;
+  delivered_count: number;
+}
+
+interface TodayTemplateData {
+  template: string;
+  delivered_count: number;
+}
+
 
 const App: React.FC = () => {
   const today = new Date().toISOString().split('T')[0];
@@ -74,7 +106,11 @@ const App: React.FC = () => {
   const [endDate, setEndDate] = useState<string>(today);
 
   const [apiResponse, setApiResponse] = useState<ApiResponse | null>(null);
+  const [templateData, setTemplateData] = useState<TemplateData[]>([]);
+  const [todayTemplateData, setTodayTemplateData] = useState<TodayTemplateData[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(true);
+  const [isLoadingTemplate, setIsLoadingTemplate] = useState<boolean>(true);
+  const [isLoadingToday, setIsLoadingToday] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
 
   const fetchData = async (start: string, end: string) => {
@@ -123,7 +159,52 @@ const App: React.FC = () => {
   useEffect(() => {
     // Fetch data for the default date range (today) on initial load
     fetchData(startDate, endDate);
+    fetchTemplateData();
+    fetchTodayTemplateData();
   }, []);
+
+  const fetchTodayTemplateData = async () => {
+    console.log('[App.tsx] Fetching today\'s template delivery stats...');
+    setIsLoadingToday(true);
+    try {
+      const response = await fetch('http://localhost:3001/api/notifications/template-stats-today');
+      
+      if (!response.ok) {
+        throw new Error(`Failed to fetch today's template data: ${response.status} ${response.statusText}`);
+      }
+
+      const data: TodayTemplateData[] = await response.json();
+      console.log('[App.tsx] Successfully fetched today\'s template data:', data);
+      setTodayTemplateData(data);
+    } catch (err: any) {
+      console.error("[App.tsx] Failed to fetch today's template data from backend.", err);
+      setTodayTemplateData([]);
+    } finally {
+      setIsLoadingToday(false);
+    }
+  };
+
+  const fetchTemplateData = async () => {
+    console.log('[App.tsx] Fetching template delivery stats...');
+    setIsLoadingTemplate(true);
+    try {
+      const response = await fetch('http://localhost:3001/api/notifications/template-stats');
+      
+      if (!response.ok) {
+        throw new Error(`Failed to fetch template data: ${response.status} ${response.statusText}`);
+      }
+
+      const data: TemplateData[] = await response.json();
+      console.log('[App.tsx] Successfully fetched template data:', data);
+      setTemplateData(data);
+    } catch (err: any) {
+      console.error("[App.tsx] Failed to fetch template data from backend.", err);
+      // Use empty array as fallback
+      setTemplateData([]);
+    } finally {
+      setIsLoadingTemplate(false);
+    }
+  };
 
   const handleFilterApply = () => {
     fetchData(startDate, endDate);
@@ -243,6 +324,54 @@ const App: React.FC = () => {
              </div>
           )}
 
+          <div className="lg:col-span-2">
+            <Card title="📧 Template Delivery Stats (Last 7 Days - Excluding Today)">
+              <p className="mb-4 text-gray-300">
+                Successful delivery counts for payment reminder templates over the past 7 days (excluding today's incomplete data).
+              </p>
+              {isLoadingTemplate ? (
+                <div className="flex justify-center items-center h-[400px]">
+                  <p>Loading template delivery data...</p>
+                </div>
+              ) : templateData.length > 0 ? (
+                <TemplateDeliveryChart data={templateData} />
+              ) : (
+                <div className="flex justify-center items-center h-[400px]">
+                  <p>No template delivery data found for the last 7 days.</p>
+                </div>
+              )}
+            </Card>
+          </div>
+
+          <div className="lg:col-span-2">
+            <Card title="📬 Today's Template Deliveries">
+              <p className="mb-4 text-gray-300">
+                Real-time successful delivery counts for today (so far).
+              </p>
+              {isLoadingToday ? (
+                <div className="flex justify-center items-center h-[300px]">
+                  <p>Loading today's data...</p>
+                </div>
+              ) : todayTemplateData.length > 0 ? (
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                  {todayTemplateData.map((item) => (
+                    <div key={item.template} className="bg-gray-800 p-4 rounded-lg border border-gray-700">
+                      <h3 className="text-sm font-medium text-gray-400 mb-2">
+                        {item.template.replace(/_/g, ' ').replace(/v\d+/g, (match) => match.toUpperCase())}
+                      </h3>
+                      <p className="text-3xl font-bold text-cyan-400">{item.delivered_count.toLocaleString()}</p>
+                      <p className="text-xs text-gray-500 mt-1">successful deliveries</p>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="flex justify-center items-center h-[300px]">
+                  <p>No deliveries found for today yet.</p>
+                </div>
+              )}
+            </Card>
+          </div>
+
 
           <Card title="🚀 Main Query: Daily Counts">
             <p className="mb-4 text-gray-300">This parameterized query is executed on the backend to fetch raw logs for the selected date range. The server then aggregates this data.</p>
@@ -269,6 +398,11 @@ const App: React.FC = () => {
                   <p className="mb-4 text-gray-300">Analyze the success rate of notifications.</p>
                   <CodeBlock code={statusQuery} language="sql" />
                 </div>
+              </div>
+              <div className="mt-6">
+                <h3 className="text-lg font-semibold text-cyan-400 mb-2">Template Delivery Stats</h3>
+                <p className="mb-4 text-gray-300">Track successful deliveries by template over the last 7 days.</p>
+                <CodeBlock code={templateDeliveryQuery} language="sql" />
               </div>
             </Card>
           </div>
